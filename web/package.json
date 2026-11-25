@@ -23,6 +23,7 @@
     "@vite-pwa/assets-generator": "1.0.4",
     "@vitejs/plugin-react": "^4.3",
     "happy-dom": "^20.14.5",
+    "playwright-core": "^1.65.1",
     "tailwindcss": "^4.1",
     "typescript": "^5.7",
     "vite": "^6",
