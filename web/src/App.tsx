@@ -1,55 +1,41 @@
-import { useEffect, useState } from "react";
-import { initApp } from "@freeappstore/sdk";
-import { type NavItem, PageHeader, Shell } from "@freeappstore/sdk/ui";
-
-// "grocery-price-tracker" is replaced by the CLI scaffold or deployment flow with this app's id.
-export const fas = initApp({ appId: "grocery-price-tracker" });
-
-// The app's screens. Shell renders them as the navbar: a <nav> in its topbar
-// with the current screen highlighted, collapsing to a menu on phones.
-// Add one entry per primary screen; `title` becomes the browser tab title.
-const NAV: NavItem[] = [
-  { label: "Home", href: "/", title: "grocery-price-tracker" },
-  { label: "About", href: "/about", title: "About — grocery-price-tracker" },
-];
-
-export default function App() {
-  const [path, setPath] = useState(() => window.location.pathname);
-
-  // Keep the screen in step with the browser's back and forward buttons.
-  useEffect(() => {
-    const sync = () => setPath(window.location.pathname);
-    window.addEventListener("popstate", sync);
-    return () => window.removeEventListener("popstate", sync);
-  }, []);
-
-  // Nav clicks switch screens without a page load. Shell scrolls to the top
-  // and moves focus to the new screen's PageHeader.
-  const navigate = (href: string) => {
-    window.history.pushState(null, "", href);
-    setPath(window.location.pathname);
-  };
-
-  return (
-    <Shell app={fas} appName={"grocery-price-tracker"} nav={NAV} onNavigate={navigate}>
-      <div className="mx-auto w-full max-w-3xl p-4 sm:p-8">
-        {path === "/about" ? <About /> : <Home />}
-      </div>
-    </Shell>
-  );
+﻿import { useEffect, useRef, useState } from 'react';
+import { initApp } from '@freeappstore/sdk';
+import { baseUnit, categories, findBarcode, gtin, perUnit, summary, units, type Observation, type Product, type Unit } from './model';
+export const fas = initApp({appId:'grocery-price-tracker'});
+const KEY='grocery-price-tracker-v1';
+type Data={products:Product[]; observations:Observation[]};
+const id=()=>crypto.randomUUID();
+function load():Data { try { const d=JSON.parse(localStorage.getItem(KEY)||'null'); return d&&Array.isArray(d.products)&&Array.isArray(d.observations)?d:{products:[],observations:[]}; } catch { return {products:[],observations:[]}; } }
+const money=(n:number|null)=>n===null?'—':`$${n.toFixed(2)}`;
+export default function App(){
+ const [data,setData]=useState<Data>(load), [page,setPage]=useState<'home'|'detail'|'scan'|'history'>('home'), [selected,setSelected]=useState(''), [search,setSearch]=useState(''), [filter,setFilter]=useState('All'), [kind,setKind]=useState('All'), [from,setFrom]=useState(''), [to,setTo]=useState(''), [error,setError]=useState('');
+ const [name,setName]=useState(''),[category,setCategory]=useState('Produce'),[size,setSize]=useState('1'),[unit,setUnit]=useState<Unit>('each'),[code,setCode]=useState(''),[unknown,setUnknown]=useState(''),[link,setLink]=useState('');
+ const [price,setPrice]=useState(''),[quantity,setQuantity]=useState('1'),[entryUnit,setEntryUnit]=useState<Unit>('each'),[type,setType]=useState<'shelf'|'purchase'>('shelf'),[notes,setNotes]=useState(''),[photo,setPhoto]=useState<string|undefined>();
+ const [camera,setCamera]=useState(false); const cameraGeneration=useRef(0); const video=useRef<HTMLVideoElement>(null); const stopRef=useRef<()=>void>(()=>{});
+ const product=data.products.find(p=>p.id===selected); const rows=data.observations.filter(o=>o.productId===selected).sort((a,b)=>b.timestamp.localeCompare(a.timestamp));
+ const save=(next:Data)=>{try{localStorage.setItem(KEY,JSON.stringify(next));setData(next);setError('');return true}catch{setError('Could not save on this device. Check available storage and try again.');return false}};
+ const open=(p:Product)=>{setSelected(p.id);setQuantity(String(p.packageSize));setEntryUnit(p.unit);setPrice('');setNotes('');setPhoto(undefined);setPage('detail')};
+ const stop=()=>{cameraGeneration.current++;stopRef.current();stopRef.current=()=>{};setCamera(false)};
+ const resolve=(input:string)=>{try { const normalized=gtin(input); const p=findBarcode(data.products,input); stop(); setCode(input);setError(''); if(p){setUnknown('');open(p)} else {setUnknown(normalized);setPage('scan')} }catch(e){setError((e as Error).message)}};
+ useEffect(()=>()=>{cameraGeneration.current++;stopRef.current()},[]);
+ const start=async()=>{const generation=++cameraGeneration.current;setError('');try{const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}}); if(generation!==cameraGeneration.current||!video.current){stream.getTracks().forEach(t=>t.stop());return} const v=video.current; v.srcObject=stream; await v.play(); let active=true; let timer=0; let controls:{stop:()=>void}|undefined; stopRef.current=()=>{active=false;window.clearTimeout(timer);controls?.stop();stream.getTracks().forEach(t=>t.stop());v.srcObject=null}; setCamera(true);
+ const Detector=(window as any).BarcodeDetector; if(Detector){ const detector=new Detector({formats:['upc_a','ean_13']}); const scan=async()=>{if(!active)return;try{const results=await detector.detect(v);if(results[0]?.rawValue){resolve(results[0].rawValue);return}}catch{} timer=window.setTimeout(scan,300)}; void scan(); }
+ else { const { BrowserMultiFormatReader }=await import('@zxing/browser'); const reader=new BrowserMultiFormatReader(); controls=await reader.decodeFromVideoElement(v,(result)=>{if(active&&result)resolve(result.getText())}); if(!active)controls.stop(); }
+ }catch{stop();setError('Camera unavailable or permission denied. Enter the barcode manually or search by name.')} };
+ const addProduct=(e:React.FormEvent)=>{e.preventDefault(); const n=Number(size);if(!name.trim()||!Number.isFinite(n)||n<=0){setError('Enter a name and a package quantity greater than zero.');return} const p:Product={id:id(),name:name.trim(),category,packageSize:n,unit,barcodes:unknown?[unknown]:[]}; if(save({...data,products:[...data.products,p]})){setName('');setUnknown('');open(p)}};
+ const linkProduct=()=>{const p=data.products.find(x=>x.id===link);if(!p||!unknown)return;const updated={...p,barcodes:[...p.barcodes,unknown]};if(save({...data,products:data.products.map(x=>x.id===p.id?updated:x)})){setUnknown('');open(updated)}};
+ const addObservation=(e:React.FormEvent)=>{e.preventDefault();if(!product)return;try{if(price.trim()==='')throw new Error('Enter a price.');const amount=Number(price),q=Number(quantity);const o:Observation={id:id(),productId:product.id,type,price:amount,quantity:q,unit:entryUnit,pricePerUnit:perUnit(amount,q,entryUnit),timestamp:new Date().toISOString(),notes:notes.trim(),...(photo?{photoDataUrl:photo}:{})};if(save({...data,observations:[...data.observations,o]})){setPrice('');setNotes('');setPhoto(undefined)}}catch(e){setError((e as Error).message)}};
+ const filtered=data.products.filter(p=>(filter==='All'||p.category===filter)&&(`${p.name} ${p.category}`).toLowerCase().includes(search.toLowerCase()));
+ const history=data.observations.filter(o=>{const p=data.products.find(x=>x.id===o.productId);const day=o.timestamp.slice(0,10);return p&&(filter==='All'||p.category===filter)&&(kind==='All'||o.type===kind)&&(!from||day>=from)&&(!to||day<=to)}).sort((a,b)=>b.timestamp.localeCompare(a.timestamp));
+ const groups=[...new Set(rows.map(r=>baseUnit(r.unit)))];
+ return <div className="app"><header><div><small>YOUR PRIVATE PRICE BOOK</small><h1>Grocery prices</h1><p>Remember the price. Shop with confidence.</p></div><nav><button onClick={()=>{stop();setPage('home')}}>Items</button><button onClick={()=>{stop();setPage('scan')}}>Scan barcode</button><button onClick={()=>{stop();setPage('history')}}>History</button></nav></header><main>{error&&<p role="alert" className="error">{error}</p>}
+ {page==='home'&&<><h2>Find an item</h2><label>Search by name or category<input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Try avocado or dairy"/></label><label>Category<select value={filter} onChange={e=>setFilter(e.target.value)}><option>All</option>{categories.map(c=><option key={c}>{c}</option>)}</select></label><div className="list">{filtered.map(p=><button className="item" key={p.id} onClick={()=>open(p)}><strong>{p.name}</strong><span>{p.category} · {p.packageSize} {p.unit} →</span></button>)}{!filtered.length&&<p>No items found. Add one below or scan a barcode.</p>}</div><details><summary>Add an item</summary><ProductForm name={name} setName={setName} category={category} setCategory={setCategory} size={size} setSize={setSize} unit={unit} setUnit={setUnit} submit={addProduct}/></details></>}
+ {page==='scan'&&<><h2>Scan a barcode</h2><p>Scan a UPC-A or EAN-13 package. You can also enter its digits below.</p><video ref={video} playsInline muted className={camera?'viewfinder':'hidden'}/><div className="actions"><button onClick={start} disabled={camera}>Start camera</button><button onClick={stop} disabled={!camera}>Stop camera</button></div><form onSubmit={e=>{e.preventDefault();resolve(code)}}><label>Manual barcode<input inputMode="numeric" value={code} onChange={e=>setCode(e.target.value)} placeholder="12 or 13 digits"/></label><button>Find barcode</button></form><button className="secondary" onClick={()=>{stop();setPage('home')}}>Search items by name</button>{unknown&&<section><h3>New barcode</h3><p>This package is not linked yet. Link it to an existing exact package or create one.</p>{data.products.length>0&&<><label>Existing item and package<select value={link} onChange={e=>setLink(e.target.value)}><option value="">Choose an item</option>{data.products.map(p=><option key={p.id} value={p.id}>{p.name} · {p.packageSize} {p.unit}</option>)}</select></label><button disabled={!link} onClick={linkProduct}>Link barcode</button></>}<h3>Or create a product</h3><ProductForm name={name} setName={setName} category={category} setCategory={setCategory} size={size} setSize={setSize} unit={unit} setUnit={setUnit} submit={addProduct}/></section>}</>}
+ {page==='detail'&&product&&<><button className="secondary" onClick={()=>setPage('home')}>← All items</button><h2>{product.name}</h2><p>{product.category} · {product.packageSize} {product.unit}</p><section><h3>Record a price</h3><form onSubmit={addObservation}><div className="grid"><label>Price ($)<input type="number" min="0" step="0.01" inputMode="decimal" value={price} onChange={e=>setPrice(e.target.value)} required/></label><label>Quantity<input type="number" min="0.001" step="any" value={quantity} onChange={e=>setQuantity(e.target.value)} required/></label><label>Unit<select value={entryUnit} onChange={e=>setEntryUnit(e.target.value as Unit)}>{units.map(u=><option key={u}>{u}</option>)}</select></label><label>Type<select value={type} onChange={e=>setType(e.target.value as typeof type)}><option value="shelf">Saw it (shelf)</option><option value="purchase">Bought it</option></select></label></div><label>Notes (optional)<input value={notes} onChange={e=>setNotes(e.target.value)}/></label><label>Photo (optional)<input type="file" accept="image/*" capture="environment" onChange={e=>{const file=e.target.files?.[0];if(!file){setPhoto(undefined);return} const reader=new FileReader();reader.onload=()=>setPhoto(String(reader.result));reader.readAsDataURL(file)}}/></label><button>Save price</button></form></section><h3>Price comparison</h3>{!groups.length&&<p>No prices yet. Save a shelf or purchase price to start your history.</p>}{groups.map(g=>{const s=summary(rows,g as Unit);const current=rows.find(r=>baseUnit(r.unit)===g);return <section key={g}><h4>Per {g}</h4><div className="stats"><span>Latest <b>{money(current?.pricePerUnit??null)}</b></span><span>Typical <b>{money(s.typical)}</b></span><span>Lowest shelf <b>{money(s.shelf)}</b></span><span>Lowest paid <b>{money(s.purchase)}</b></span></div><div className="chart" aria-label={`Price history per ${g}`}>{rows.filter(r=>baseUnit(r.unit)===g).slice(0,20).reverse().map(r=><div key={r.id} title={`${new Date(r.timestamp).toLocaleDateString()}: ${money(r.pricePerUnit)}`} style={{height:`${Math.max(5,Math.round(100*r.pricePerUnit/Math.max(...rows.filter(x=>baseUnit(x.unit)===g).map(x=>x.pricePerUnit),0.01)))}%`}} />)}</div></section>})}<h3>History</h3><History rows={rows} products={data.products}/></>}
+ {page==='history'&&<><h2>All history</h2><div className="grid"><label>Category<select value={filter} onChange={e=>setFilter(e.target.value)}><option>All</option>{categories.map(c=><option key={c}>{c}</option>)}</select></label><label>Type<select value={kind} onChange={e=>setKind(e.target.value)}><option>All</option><option value="shelf">Saw it</option><option value="purchase">Bought it</option></select></label><label>From<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label><label>To<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label></div><History rows={history} products={data.products}/></>}
+ </main><footer>Saved on this device · <a href="https://freeappstore.online">FreeAppStore</a></footer></div>
 }
+function ProductForm(p:{name:string;setName:(v:string)=>void;category:string;setCategory:(v:string)=>void;size:string;setSize:(v:string)=>void;unit:Unit;setUnit:(v:Unit)=>void;submit:(e:React.FormEvent)=>void}){return <form onSubmit={p.submit}><label>Item name<input value={p.name} onChange={e=>p.setName(e.target.value)} required/></label><div className="grid"><label>Category<select value={p.category} onChange={e=>p.setCategory(e.target.value)}>{categories.map(c=><option key={c}>{c}</option>)}</select></label><label>Package quantity<input type="number" min="0.001" step="any" value={p.size} onChange={e=>p.setSize(e.target.value)} required/></label><label>Unit<select value={p.unit} onChange={e=>p.setUnit(e.target.value as Unit)}>{units.map(u=><option key={u}>{u}</option>)}</select></label></div><button>Add item</button></form>}
+function History({rows,products}:{rows:Observation[];products:Product[]}){return rows.length?<div className="list">{rows.map(r=><article className="history" key={r.id}><strong>{products.find(p=>p.id===r.productId)?.name} · {money(r.price)}</strong><span>{r.type==='shelf'?'Saw it':'Bought it'} · {r.quantity} {r.unit} · {money(r.pricePerUnit)}/{baseUnit(r.unit)}</span><small>{new Date(r.timestamp).toLocaleString()}{r.notes?` · ${r.notes}`:''}</small>{r.photoDataUrl&&<img src={r.photoDataUrl} alt="Saved shelf or item"/>}</article>)}</div>:<p>No history for these filters yet.</p>}
 
-function Home() {
-  return <PageHeader title={"Welcome to grocery-price-tracker"} description="Edit web/src/App.tsx to get started." />;
-}
 
-function About() {
-  return (
-    <>
-      <PageHeader title="About" />
-      <p style={{ color: "var(--muted)" }}>
-        grocery-price-tracker is a free app on <a href="https://freeappstore.online">FreeAppStore</a>.
-      </p>
-    </>
-  );
-}
