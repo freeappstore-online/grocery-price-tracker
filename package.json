@@ -1,0 +1,21 @@
+{
+  "name": "grocery-price-tracker",
+  "private": true,
+  "packageManager": "pnpm@10.30.3",
+  "engines": {
+    "node": ">=22"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp"
+    ]
+  },
+  "scripts": {
+    "dev": "pnpm --filter @grocery-price-tracker/web dev",
+    "build": "pnpm --filter @grocery-price-tracker/web build",
+    "preview": "pnpm --filter @grocery-price-tracker/web preview",
+    "typecheck": "pnpm --filter @grocery-price-tracker/web exec tsc -b",
+    "test": "pnpm --filter @grocery-price-tracker/web test"
+  }
+}
